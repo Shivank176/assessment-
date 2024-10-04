@@ -1,0 +1,136 @@
+import torch
+from PIL import Image
+import numpy as np
+import torchvision.transforms as T
+from torchvision.models.detection import maskrcnn_resnet50_fpn
+
+# List of object categories in the COCO dataset
+COCO_INSTANCE_CATEGORY_NAMES = [
+    '__background__', 'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
+    'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign',
+    'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+    'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag',
+    'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite',
+    'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+    'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana',
+    'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza',
+    'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table',
+    'toilet', 'TV', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave',
+    'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
+    'teddy bear', 'hair drier', 'toothbrush'
+]
+
+# Function to load and preprocess the image
+def load_image(image_path):
+    image = Image.open(image_path).convert("RGB")
+    transform = T.Compose([T.ToTensor()])
+    return transform(image).unsqueeze(0), image
+
+# Function to apply a red mask to the segmented object
+def apply_mask(image, mask, color=(255, 0, 0), alpha=0.5):
+    r, g, b = image.split()
+    r = np.array(r)
+    g = np.array(g)
+    b = np.array(b)
+
+    mask = mask.cpu().numpy()
+
+    r[mask > 0.5] = int(color[0])
+    g[mask > 0.5] = int(color[1])
+    b[mask > 0.5] = int(color[2])
+
+    masked_image = np.stack([r, g, b], axis=2)
+    return Image.fromarray(masked_image)
+
+# Task 1: Segment the object using a text class prompt and apply a red mask
+def task1(image_path, object_class, output_path):
+    # Load the pre-trained Mask R-CNN model
+    model = maskrcnn_resnet50_fpn(pretrained=True)
+    model.eval()
+
+    # Load and preprocess the image
+    image_tensor, original_image = load_image(image_path)
+
+    # Perform object detection
+    with torch.no_grad():
+        predictions = model(image_tensor)[0]
+
+    # Identify the object class using the predicted labels
+    labels = predictions['labels'].cpu().numpy()
+    masks = predictions['masks'].cpu()
+
+    object_detected = False
+    for i, label in enumerate(labels):
+        if COCO_INSTANCE_CATEGORY_NAMES[label] == object_class:
+            object_detected = True
+            mask = masks[i, 0]
+            composite_image = apply_mask(original_image, mask)
+            composite_image.save(output_path)
+            print(f"Mask applied, output saved to {output_path}")
+            break
+
+    if not object_detected:
+        print(f"No object of class {object_class} detected in the image.")
+
+# Task 2: Change the position of the segmented object
+def task2(, object_class, output_path, shift_x, shift_y):
+    # Load the pre-trained Mask R-CNN model
+    model = maskrcnn_resnet50_fpn(pretrained=True)
+    model.eval()
+
+    # Load and preprocess the image
+    image_tensor, original_image = load_image(image_path)
+    original_image_np = np.array(original_image)
+
+    # Perform object detection
+    with torch.no_grad():
+        predictions = model(image_tensor)[0]
+
+    labels = predictions['labels'].cpu().numpy()
+    masks = predictions['masks'].cpu()
+
+    object_detected = False
+    for i, label in enumerate(labels):
+        if COCO_INSTANCE_CATEGORY_NAMES[label] == object_class:
+            object_detected = True
+            mask = masks[i, 0].cpu().numpy()
+
+            # Get bounding box coordinates for the object
+            bbox = predictions['boxes'][i].cpu().numpy().astype(int)
+            object_pixels = mask > 0.5
+
+            # Extract the object from the image
+            object_region = original_image_np[bbox[1]:bbox[3], bbox[0]:bbox[2]]
+
+            # Remove the object from its original position
+            new_image_np = original_image_np.copy()
+            new_image_np[bbox[1]:bbox[3], bbox[0]:bbox[2]][object_pixels] = 0
+
+            # Calculate the new position and paste the object
+            new_x_start = max(bbox[0] + shift_x, 0)
+            new_y_start = max(bbox[1] + shift_y, 0)
+            new_x_end = new_x_start + object_region.shape[1]
+            new_y_end = new_y_start + object_region.shape[0]
+
+            # Paste the object in the new position, handling boundary cases
+            new_image_np[new_y_start:new_y_end, new_x_start:new_x_end] = object_region
+
+            # Save the final image
+            final_image = Image.fromarray(new_image_np)
+            final_image.save(output_path)
+            print(f"Object repositioned and output saved to {output_path}")
+            break
+
+    if not object_detected:
+        print(f"No object of class {object_class} detected in the image.")
+
+# Run Task 1 (segmentation) and Task 2 (repositioning) with the provided image
+
+image_path = '/content/Screenshot 2024-10-03 171620.png'
+
+# Task 1: Segment object
+task1(image_path, 'shelf', '/content/segmented_output.png')
+
+# Task 2: Reposition object by 80 pixels horizontally and 0 pixels vertically
+task2(image_path, 'shelf', '/content/repositioned_output.png', 80, 0)
+
